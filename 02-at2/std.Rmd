@@ -1,0 +1,189 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Analysis of AT2 cells from young mice 1 day after ISRIB treatment
+
+```{r}
+library(pheatmap)
+library(gplots)
+```
+
+
+```{r}
+simpleCache::setCacheDir(".r-cache")
+```
+
+
+```{r}
+source("https://raw.githubusercontent.com/NUPulmonary/utils/master/R/edger.R")
+```
+
+```{r}
+samples <- load_samples(
+  name_pattern = "S\\d\\d\\_(.*)\\_(.*)\\_(.+)\\_R\\d",
+  columns = c("CellType", "Condition", "Treatment"),
+  uRNA_pattern = "URNA"
+)
+samples
+```
+
+
+```{r}
+counts_uns <- load_counts("../../data/at2/counts/htseq.all.counts.txt", samples)
+```
+
+Export counts for GEO
+```{r}
+write.table(
+  counts_uns[, samples$sample_name[samples$group %in% c("AT2_Naive_Saline", "AT2_Naive_ISRIB")]],
+  "../../data/at2/geo/counts.txt",
+  quote = FALSE,
+  sep = "\t"
+)
+```
+
+
+```{r}
+plot_cor(counts_uns)
+```
+
+
+
+```{r}
+gene.anno <- simpleCache::simpleCache('gene.anno', {
+  get_anno(counts_uns)
+})
+```
+
+
+```{r}
+all <- create_experiment(samples, counts_uns, gene.anno, remove_urna = FALSE)
+all <- add_dge(all)
+```
+
+```{r}
+plot_mds(all)
+```
+
+
+```{r}
+at2 <- create_experiment(
+  samples[samples$CellType == "AT2" & !is.na(samples$CellType), ],
+  counts_uns,
+  anno = gene.anno
+)
+at2 <- add_dge(at2)
+at2 <- add_pca(at2)
+```
+
+```{r}
+pc2 <- at2$pca$rotation[, "PC3"]
+gene.anno$external_gene_name[match(names(pc2[order(abs(pc2), decreasing = T)])[1:10], gene.anno$ensembl_gene_id)]
+```
+
+
+```{r}
+plot_pca(at2, dims = c(1,2), label = T)
+```
+
+
+```{r}
+i.vs.s_naive <- run_de(
+  at2,
+  makeContrasts(AT2_Naive_ISRIB - AT2_Naive_Saline, levels = at2$design),
+  "i-vs-s_naive-uns",
+  "ISRIB vs Saline (Naive)"
+)
+```
+
+
+```{r}
+at2 <- add_de(
+  at2,
+  makeContrasts(AT2_Naive_ISRIB - AT2_Naive_Saline, levels = at2$design),
+  "i-vs-s_naive-uns",
+  "ISRIB vs Saline (Naive)"
+)
+```
+
+
+```{r}
+pdf("i-vs-s_naive-uns/i-vs-s_naive-uns-volcano-manual.pdf", width = 6, height = 6, useDingbats = FALSE)
+up.name <- ""
+name <- "i-vs-s_naive-uns"
+
+highlight.genes <- c(
+  "Hspa1b", "Hspa1a", "Nr4a3", "Hsph1", "Hmgcs2", "Sema4g", "Lamb1", "Dnaja1", "Dnajb1",
+  "Inava", "Pim1", "Gale", "Slc41a2", "Nim1k", "Egr1", "Srsf5", "Mthfd2", "Rab3c", "Camk2b"
+)
+
+genes <- at2$dea[[name]]$genes
+up <- at2$dea[[name]]$up
+down <- at2$dea[[name]]$down
+
+upregs <- genes$FDR < .05 & genes$logFC > 0
+downregs <- genes$FDR < .05 & genes$logFC < 0
+up.legend <- paste0("Up in ", up.name, " (", sum(upregs), ")")
+down.legend <- paste0("Down in ", up.name, " (", sum(downregs), ")")
+
+genes$significance <- "Not significant"
+genes$significance[upregs] <- up.legend
+genes$significance[downregs] <- down.legend
+genes$significance <- factor(
+    genes$significance,
+    levels = c(
+        "Not significant",
+        down.legend,
+        up.legend
+    )
+)
+
+if (is.null(highlight.genes)) {
+    top.genes <- data.frame(rbind(
+        genes[rownames(up)[1:10], ],
+        genes[rownames(down)[1:10], ]
+    ))
+} else {
+    top.genes <- genes[genes$external_gene_name %in% highlight.genes, ]
+}
+
+plot <- ggplot(genes, aes(x = logFC, y = -log10(FDR))) +
+    geom_point(
+        aes(color = significance),
+        alpha = 1,
+        shape = 20,
+        size = 3
+    ) +
+    theme_minimal() +
+    scale_color_manual(
+        values = c("#bbbbbb", "#e37900", "#e37900"),
+        labels = c(
+            paste0("Not significant (", sum(genes$significance == "Not significant"), ")"),
+            down.legend,
+            up.legend
+        )
+    ) +
+    theme(
+        legend.position = "none",
+        legend.text = element_text(size = 10),
+        legend.title = element_blank(),
+        plot.title = element_text(size = 16),
+        panel.grid = element_blank(),
+        axis.line = element_line(colour = "gray")
+    ) +
+    geom_text_repel(
+        data = top.genes,
+        aes(label = external_gene_name),
+        size = 5,
+        box.padding = unit(.6, "lines"),
+        label.padding = unit(10, "lines"),
+        #point.padding = unit(0, "lines"),
+        min.segment.length = 0,
+        #ylim = c(1.5, NA),
+        segment.alpha = 0.5
+    )
+plot
+dev.off()
+```
