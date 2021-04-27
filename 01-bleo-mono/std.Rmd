@@ -1,0 +1,570 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(pheatmap)
+library(gplots)
+library(ggbiplot)
+```
+
+
+```{r}
+simpleCache::setCacheDir(".r-cache")
+```
+
+
+```{r}
+source("https://raw.githubusercontent.com/NUPulmonary/utils/master/R/edger.R")
+```
+
+```{r}
+samples <- load_samples(
+  name_pattern = "S\\d\\d\\_(Y|O)\\_(N|B)\\_(.+)\\_(.+)\\_R\\d", 
+  columns = c("Age", "Condition", "CellType", "Treatment"),
+  sample_id_from_name = TRUE
+)
+samples
+```
+
+```{r}
+counts_uns <- load_counts("../../data/bleo-isrib/counts-uns/htseq.all.counts.txt", samples)
+```
+
+Export counts for GEO
+```{r}
+write.table(
+  counts_uns[, samples$sample_name[samples$group != "Uni RNA"]],
+  "../../data/bleo-isrib/geo/counts.txt",
+  quote = FALSE,
+  sep = "\t"
+)
+```
+
+
+```{r}
+plot_cor(counts_uns)
+```
+
+```{r}
+cor.matrix <- lsa::cosine(as.matrix(counts_uns[, moam$samples$sample_name]))
+corrplot::corrplot(
+    cor.matrix,
+    method = "color",
+    tl.cex = .8,
+    tl.col = "black",
+    cl.lim = c(0.9, 1),
+    tl.srt = 45,
+    is.corr = FALSE
+)
+```
+
+
+```{r}
+pdf("lib-size-unstranded.pdf", width = 8, height = 6)
+plot_lib_sizes(counts_uns) + theme_minimal() + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Unstranded")
+dev.off()
+```
+
+```{r}
+gene.anno <- simpleCache::simpleCache('gene.anno', {
+  get_anno(counts_uns)
+})
+```
+
+```{r}
+all <- create_experiment(samples, counts_uns, gene.anno, remove_urna = FALSE)
+all <- add_dge(all)
+```
+
+```{r}
+plot_mds(all)
+```
+
+```{r}
+exp <- create_experiment(samples, counts_uns, anno = gene.anno, exclude = "AM0303")
+exp <- add_dge(exp)
+exp <- add_pca(exp)
+```
+
+```{r}
+plot_mds(exp)
+```
+
+```{r}
+mono <- create_experiment(
+  samples[samples$CellType == "Mono" & !is.na(samples$CellType), ], 
+  counts_uns, 
+  anno = gene.anno,
+  exclude = c("S04")
+)
+mono <- add_dge(mono)
+mono <- add_pca(mono)
+```
+
+```{r}
+plot_mds(mono, label = TRUE)
+```
+
+```{r}
+pdf("mono-pca.pdf", width = 6, height = 4)
+plot_pca(mono, label = TRUE, pt.size = 2)
+dev.off()
+```
+
+```{r}
+df <- data.frame(mono$pca$x[, 1:2])
+colnames(df) <- c("x", "y")
+df <- cbind(df, mono$samples[match(rownames(df), mono$samples$sample_name), ])
+df$group <- paste(df$Age, df$Treatment, sep = "_")
+df$group <- factor(df$group, levels = c("Y_Saline", "O_Saline", "Y_ISRIB", "O_ISRIB"))
+
+plot <- ggplot(df, aes_string(
+  "x", 
+  "y", 
+  col = "group",
+  shape = "group"
+)) +
+    geom_point(size = 3) + stat_ellipse() +
+    ggtitle("PCA of all samples") +
+    xlab(sprintf(
+        "PC%d (%.1f%% explained variance)",
+        1,
+        mono$pca.var[1] * 100
+    )) +
+    ylab(sprintf(
+        "PC%d (%.1f%% explained variance)",
+        2,
+        mono$pca.var[2] * 100
+    )) +
+    theme_minimal() +
+  scale_color_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = "blue", 
+      "O_Saline" = "red",
+      "Y_ISRIB" = "blue", 
+      "O_ISRIB" = "red"
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB")
+  ) +
+  scale_shape_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = 16, 
+      "O_Saline" = 16,
+      "Y_ISRIB" = 1, 
+      "O_ISRIB" = 1
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB")
+  ) +
+    coord_fixed() + ggtitle("")
+
+#pdf("figure-s4a.pdf", width = 8, height = 6)
+plot
+#dev.off()
+```
+
+```{r}
+p <- ggbiplot(mono$pca, 
+         scale = 1, 
+         obs.scale = 1, 
+         var.scale = 1, 
+         groups=paste(mono$samples$Age, mono$samples$Treatment, sep = "_"), 
+         var.axes = F, 
+         ellipse = T) +
+  geom_point(aes(color = groups, shape = groups), size = 4) +
+  xlab(sprintf(
+      "PC%d (%.1f%% explained variance)",
+      1,
+      mono$pca.var[1] * 100
+  )) +
+  ylab(sprintf(
+      "PC%d (%.1f%% explained variance)",
+      2,
+      mono$pca.var[2] * 100
+  )) +
+  theme_minimal() + scale_color_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = "blue", 
+      "O_Saline" = "red",
+      "Y_ISRIB" = "blue", 
+      "O_ISRIB" = "red"
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB"),
+    guide = guide_legend(override.aes = list(linetype = 0))
+  ) +
+  scale_shape_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = 16, 
+      "O_Saline" = 16,
+      "Y_ISRIB" = 1, 
+      "O_ISRIB" = 1
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB")
+  ) + theme(
+    axis.line = element_line(colour = "gray"), 
+    axis.ticks = element_line(color = "gray"),
+    legend.text = element_text(size = 12)
+  )
+p$layers[[1]] <- NULL
+pdf("figure-s4a.pdf", width = 6, height = 4)
+p
+dev.off()
+```
+
+
+
+
+```{r}
+i.vs.s_young_mono <- run_de(
+  mono, 
+  makeContrasts(Y_N_Mono_ISRIB - Y_N_Mono_Saline, levels = mono$design),
+  "i-vs-s_young_mono-uns",
+  "ISRIB vs Saline (Young Mono)"
+)
+```
+
+```{r}
+i.vs.s_old_mono <- run_de(
+  mono, 
+  makeContrasts(O_N_Mono_ISRIB - O_N_Mono_Saline, levels = mono$design),
+  "i-vs-s_old_mono-uns",
+  "ISRIB vs Saline (Old Mono)"
+)
+```
+
+```{r}
+o.vs.y_mono_saline <- run_de(
+  mono, 
+  makeContrasts(O_N_Mono_Saline - Y_N_Mono_Saline, levels = mono$design),
+  "o-vs-y_mono_saline",
+  "Old vs Young (Saline Mono)"
+)
+```
+
+```{r}
+mono2 <- create_experiment(
+  samples[samples$CellType == "Mono" & !is.na(samples$CellType), ], 
+  counts_uns, 
+  anno = gene.anno,
+  exclude = c("S04"),
+  group_column = "Treatment"
+)
+mono2 <- add_dge(mono2)
+mono2 <- add_pca(mono2)
+```
+
+```{r}
+plot_pca(mono2)
+```
+
+```{r}
+i.vs.s_all_mono <- run_de(
+  mono2, 
+  makeContrasts(ISRIB - Saline, levels = mono2$design),
+  "i-vs-s_all_mono-uns",
+  "ISRIB vs Saline (All Mono)"
+)
+```
+
+```{r}
+pdf("i.vs.s_all_mono_bcv.pdf", width = 6, height = 4)
+plotBCV(mono2$dge, xlab = "Average logCPM")
+dev.off()
+```
+
+```{r}
+genes <- i.vs.s_all_mono$genes
+upregs <- genes$FDR < .05 & genes$logFC > 0
+downregs <- genes$FDR < .05 & genes$logFC < 0
+genes$significance <- "Not significant"
+genes$significance[upregs] <- "Up"
+genes$significance[downregs] <- "Down"
+genes$significance <- factor(
+    genes$significance,
+    levels = c(
+        "Not significant",
+        "Down",
+        "Up"
+    )
+)
+plot <- ggplot(genes, aes(x = logFC, y = -log10(FDR))) +
+  geom_point(
+      aes(color = significance),
+      alpha = 1,
+      shape = 20,
+      size = 2
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+      values = c("#bbbbbb", "#1010ff", "#961e2e")
+  ) +
+  theme(
+      legend.position = "none",
+      plot.title = element_text(size = 16),
+      panel.grid = element_blank(), 
+      axis.line = element_line(colour = "gray")
+  ) + xlim(-2.8, 2.8) + geom_hline(yintercept = -log10(0.05), color="#ff3030", size=0.2, linetype="dashed")
+pdf("figure-s6b-vol.pdf", width = 6, height = 6)
+plot
+dev.off()
+```
+
+
+
+```{r}
+plot <- ggplot(genes, aes(x = logCPM, y = logFC)) +
+  geom_point(
+      aes(color = significance),
+      alpha = 1,
+      shape = 20,
+      size = 2
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+      values = c("#bbbbbb", "#1010ff", "#961e2e")
+  ) +
+  theme(
+      legend.position = "none",
+      plot.title = element_text(size = 16),
+      panel.grid = element_blank(), 
+      axis.line = element_line(colour = "gray")
+  ) + ylim(-1.5, 2.8) + geom_hline(yintercept = 0, color="#666666", size=0.2, linetype="dashed")
+pdf("figure-s6b-ma.pdf", width = 6, height = 6)
+plot
+dev.off()
+```
+
+
+
+
+
+# MoAM analysis
+
+```{r}
+moam <- create_experiment(
+  samples[samples$CellType == "SFlow" & !is.na(samples$CellType), ], 
+  counts_uns, 
+  anno = gene.anno,
+  exclude = c("S28", "S32", "S34")
+)
+moam <- add_dge(moam)
+# TODO: do voom or vst on genes probably
+moam <- add_pca(moam)
+```
+
+```{r}
+set_out_dir("moam")
+```
+
+```{r}
+plot_pca(moam, label = TRUE)
+```
+
+
+```{r}
+plot_wrapper("moam-pca", function() {plot_pca(moam, pt.size = 2, label = FALSE, dims = c(1, 2))}, width = 6, height = 4)
+```
+
+```{r}
+df <- data.frame(moam$pca$x[, 1:2])
+colnames(df) <- c("x", "y")
+df <- cbind(df, moam$samples[match(rownames(df), moam$samples$sample_name), ])
+df$group <- paste(df$Age, df$Treatment, sep = "_")
+df$group <- factor(df$group, levels = c("Y_Saline", "O_Saline", "Y_ISRIB", "O_ISRIB"))
+
+plot <- ggplot(df, aes_string(
+  "x", 
+  "y", 
+  col = "group",
+  shape = "group"
+)) +
+    geom_point(size = 3) + stat_ellipse() + 
+    ggtitle("PCA of all samples") +
+    xlab(sprintf(
+        "PC%d (%.1f%% explained variance)",
+        1,
+        moam$pca.var[1] * 100
+    )) +
+    ylab(sprintf(
+        "PC%d (%.1f%% explained variance)",
+        2,
+        moam$pca.var[2] * 100
+    )) +
+    theme_minimal() +
+  scale_color_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = "blue", 
+      "O_Saline" = "red",
+      "Y_ISRIB" = "blue", 
+      "O_ISRIB" = "red"
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB")
+  ) +
+  scale_shape_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = 16, 
+      "O_Saline" = 16,
+      "Y_ISRIB" = 1, 
+      "O_ISRIB" = 1
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB")
+  ) +
+    coord_fixed() + ggtitle("")
+
+#pdf("figure-s4c.pdf", width = 8, height = 6)
+plot
+#dev.off()
+```
+
+
+```{r}
+p <- ggbiplot(moam$pca, 
+         scale = 1, 
+         obs.scale = 1, 
+         var.scale = 1, 
+         groups=paste(moam$samples$Age, moam$samples$Treatment, sep = "_"), 
+         var.axes = F, 
+         ellipse = T) +
+  geom_point(aes(color = groups, shape = groups), size = 4) +
+  xlab(sprintf(
+      "PC%d (%.1f%% explained variance)",
+      1,
+      moam$pca.var[1] * 100
+  )) +
+  ylab(sprintf(
+      "PC%d (%.1f%% explained variance)",
+      2,
+      moam$pca.var[2] * 100
+  )) +
+  theme_minimal() + scale_color_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = "blue", 
+      "O_Saline" = "red",
+      "Y_ISRIB" = "blue", 
+      "O_ISRIB" = "red"
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB"),
+    guide = guide_legend(override.aes = list(linetype = 0))
+  ) +
+  scale_shape_manual(
+    name = "Groups", 
+    values = c(
+      "Y_Saline" = 16, 
+      "O_Saline" = 16,
+      "Y_ISRIB" = 1, 
+      "O_ISRIB" = 1
+    ), labels = c("Young Vehicle", "Old Vehicle", "Young ISRIB", "Old ISRIB")
+  ) + theme(
+    axis.line = element_line(colour = "gray"), 
+    axis.ticks = element_line(color = "gray"),
+    legend.text = element_text(size = 12)
+  )
+p$layers[[1]] <- NULL
+pdf("figure-s4c.pdf", width = 6, height = 4)
+p
+dev.off()
+```
+
+
+```{r}
+write.csv(na.omit(moam$dge$genes), "moam/background.csv", quote = FALSE, row.names = FALSE)
+```
+
+```{r}
+o.vs.y_saline <- run_de(
+  moam, 
+  makeContrasts(O_B_SFlow_Saline - Y_B_SFlow_Saline, levels = moam$design),
+  "o-vs-y_saline-uns",
+  "Old vs Young (Saline)"
+)
+```
+
+```{r}
+o.vs.y_isrib <- run_de(
+  moam,
+  makeContrasts(O_B_SFlow_ISRIB - Y_B_SFlow_ISRIB, levels = moam$design),
+  "o-vs-y_isrib-uns",
+  "Old vs Young (ISRIB)"
+)
+```
+
+```{r}
+moam <- add_kmeans(moam, clusters = 5)
+write.csv(moam$kmeans_genes, "kmeans-5-uns.csv")
+pdf("kmeans-5-uns.pdf", width = 8, height = 10)
+plot_kmeans(moam, 4)
+dev.off()
+```
+
+```{r}
+for (c in unique(moam$kmeans_genes$cluster)) {
+  cl.genes <- na.omit(moam$kmeans_genes$external_gene_name[moam$kmeans_genes$cluster == c])
+  write.table(cl.genes, sprintf("kmeans-5-uns/%d.csv", c), quote = FALSE, row.names = FALSE, col.names = FALSE)
+}
+```
+
+```{r}
+table(moam$kmeans_cluster)
+```
+
+# Check gene levels that we want to highlight
+```{r}
+kmeans.genes <- read.csv("./kmeans-5-genes.csv", header = FALSE, stringsAsFactors = FALSE)
+colnames(kmeans.genes) <- c("cluster", "gene")
+```
+
+```{r}
+for (cl in 1:5) {
+  for (g in kmeans.genes$gene[kmeans.genes$cluster == cl]) {
+    pdf(sprintf("kmeans-5-uns/cl%s/gene-%s.pdf", cl, g), width = 6, height = 4)
+    plot(plot_gene2(moam, g, group_order = c("Y_B_SFlow_Saline", "O_B_SFlow_Saline", "Y_B_SFlow_ISRIB", "O_B_SFlow_ISRIB")))
+    dev.off()
+  }
+}
+```
+
+
+# Dump kmeans data for morpheus
+```{r}
+kmeans.data <- moam$kmeans_data
+kmeans.gene.names <- rownames(kmeans.data)
+symbols <- gene.anno$external_gene_name[match(kmeans.gene.names, gene.anno$ensembl_gene_id)]
+kmeans.gene.names[!is.na(symbols)] <- symbols[!is.na(symbols)]
+kmeans.data <- as.data.frame(kmeans.data)
+cols <- colnames(kmeans.data)
+kmeans.data$gene <- kmeans.gene.names
+write.table(kmeans.data[, c("gene", cols)], "kmeans-5-data.txt", row.names = FALSE)
+```
+
+# K-means final figure
+
+```{r}
+data <- moam$kmeans_data
+clusters <- length(unique(moam$kmeans_cluster))
+mycol <- colorpanel(1000, "blue", "white", "red")
+df <- data.frame(group = factor(moam$kmeans_cluster))
+rownames(df) <- names(moam$kmeans_cluster)
+pdf("kmeans-5-manual-uns.pdf", width = 8, height = 6)
+qq <- pheatmap(
+    data,
+    col = mycol,
+    cluster_rows = FALSE,
+    cluster_cols = TRUE,
+    #annotation_row = df,
+    show_rownames = FALSE,
+    show_colnames = FALSE,
+    gaps_row = cumsum(table(sort(moam$kmeans_cluster)))[1:clusters],
+    gaps_col = c(5, 8, 11),
+    cutree_cols = 4,
+    clustering_distance_cols = moam$kmeans_dist,
+    clustering_method = "ward.D2",
+    border_color = NA,
+    treeheight_col = 0
+    #breaks = seq(-3, 3, length.out = 1001)
+)
+dev.off()
+```
+
+
+
