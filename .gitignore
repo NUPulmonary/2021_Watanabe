@@ -1,0 +1,25 @@
+# Mac thrash
+.DS_Store
+._.DS_Store
+._*
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+.vscode/
+.ipynb_checkpoints/
+.r-cache/
+.analysis-cache/
+.snakemake/
+
+*.pdf
+*.sh.job
+*.out
+*.txt
+*.csv
+.Rproj.user
+.RData
+.Rhistory
+.Ruserdata
