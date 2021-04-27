@@ -1,0 +1,308 @@
+import samples
+import utils
+
+
+RUN_ID = "191025_NB501488_0316_AHHYJWBGXB"
+RUN_ID2 = "191212_NB501488_0326_AHT375BGXC"
+DATA_DIR = "../../data/at2"
+PROJECT = "Bleo-ISRIB-AT2"
+
+
+rule all:
+    input:
+        expand("{data_dir}/counts/htseq.all.counts.txt", data_dir=DATA_DIR),
+        expand("{data_dir}/counts2/htseq.all.counts.txt", data_dir=DATA_DIR),
+        expand("{data_dir}/fastqc", data_dir=DATA_DIR),
+        expand("{data_dir}/fastqc_trimmed", data_dir=DATA_DIR),
+        expand("{data_dir}/star/report.csv", data_dir=DATA_DIR),
+        expand("{data_dir}/star/report.txt", data_dir=DATA_DIR)
+
+
+rule merge_counts2:
+    input:
+        expand("{{data_dir}}/counts2/{sample}.htseq.counts", sample=samples.BLEO.Name)
+    output:
+        "{data_dir}/counts2/htseq.all.counts.txt"
+    params:
+        slurm__hours = 1,
+        slurm__cores = 4,
+        slurm__mem = 10
+    shell:
+        """
+        perl /projects/p20742/tools/bin/makeHTseqCountsTable.pl \
+            `dirname {input[0]}` \
+            /projects/p20742/anno/Ens/mm10.Ens_78/mm10.Ens_78.cuff.gtf \
+            `dirname {input[0]}`
+        """
+
+rule merge_counts:
+    input:
+        expand("{{data_dir}}/counts/{sample}.htseq.counts", sample=samples.ALL.Name)
+    output:
+        "{data_dir}/counts/htseq.all.counts.txt"
+    params:
+        slurm__hours = 1,
+        slurm__cores = 4,
+        slurm__mem = 10
+    shell:
+        """
+        perl /projects/p20742/tools/bin/makeHTseqCountsTable.pl \
+            `dirname {input[0]}` \
+            /projects/p20742/anno/Ens/mm10.Ens_78/mm10.Ens_78.cuff.gtf \
+            `dirname {input[0]}`
+        """
+
+
+rule count2:
+    input: "{data_dir}/star/{sample}_Aligned.sortedByCoord.out.bam"
+    output: "{data_dir}/counts2/{sample}.htseq.counts"
+    params:
+        slurm__hours = 1,
+        slurm__cores = 12,
+        slurm__mem = 24
+    shell:
+        """
+        if [[ ! -d `dirname {output}` ]]; then
+            mkdir `dirname {output}`
+        fi
+        htseq-count --format bam -q \
+            --mode intersection-nonempty \
+            --stranded reverse \
+            --type exon \
+            --idattr gene_id \
+            {input} \
+            /projects/p20742/anno/Ens/mm10.Ens_78/mm10.Ens_78.cuff.gtf \
+            > {output}
+        """
+
+
+rule count:
+    input: "{data_dir}/star/{sample}_Aligned.sortedByCoord.out.bam"
+    output: "{data_dir}/counts/{sample}.htseq.counts"
+    params:
+        slurm__hours = 1,
+        slurm__cores = 12,
+        slurm__mem = 24
+    shell:
+        """
+        if [[ ! -d `dirname {output}` ]]; then
+            mkdir `dirname {output}`
+        fi
+        htseq-count --format bam -q \
+            --mode intersection-nonempty \
+            --stranded reverse \
+            --type exon \
+            --idattr gene_id \
+            {input} \
+            /projects/p20742/anno/Ens/mm10.Ens_78/mm10.Ens_78.cuff.gtf \
+            > {output}
+        """
+
+rule align_report:
+    input:
+        expand("{{data_dir}}/star/{sample}_Aligned.sortedByCoord.out.bam", sample=samples.ALL.Name.values + samples.BLEO.Name.values)
+    output:
+        "{data_dir}/star/report.csv",
+        "{data_dir}/star/report.txt"
+    params:
+        slurm__skip = True
+    shell:
+        """
+        star_dir=`dirname {input[0]}`
+
+        echo "sample
+# total
+# uni map
+% uni map
+# multi map
+% multi map
+# too many
+% too many
+% unmap mism
+% unmap short
+% unmap other
+# chimeric
+% chimeric" | perl -0777 -pe 's/\\n/,/g' \
+            | sed 's/,$/\\n/' > $star_dir/report.csv
+
+        for i in `ls $star_dir/*Log.final.out`; do
+            sample=`basename $i`
+            sample=${{sample%_Log.final.out}}
+            out=`grep "mapped\|input\|chimeric" $i \
+                    | grep -v "length" | cut -d"|" -f 2 \
+                    | perl -0777 -pe 's/\s+/,/g' | sed 's/,$//'`
+            echo $sample$out >> $star_dir/report.csv
+        done
+        column -s, -t $star_dir/report.csv > $star_dir/report.txt
+        """
+
+rule align:
+    input: "{data_dir}/fastq_trimmed/{sample}_trimmed.fastq.gz"
+    output: "{data_dir}/star/{sample}_Aligned.sortedByCoord.out.bam"
+    params:
+        slurm__hours = 1,
+        slurm__cores = 12,
+        slurm__mem = 64
+    shell:
+        """
+        module purge all
+        module load STAR/2.6.0
+
+        if [[ ! -d `dirname {output}` ]]; then
+            mkdir `dirname {output}`
+        fi
+        STAR --runMode alignReads \
+            --genomeDir /projects/p20742/anno/STAR_indexes/mm10/ \
+            --runThreadN 12 \
+            --readFilesCommand 'gunzip -c' \
+            --readFilesIn {input} \
+            --outFileNamePrefix `dirname {output}`/{wildcards.sample}_ \
+            --outSAMtype BAM SortedByCoordinate
+        """
+
+rule fastqc_trimmed:
+    input: expand("{{data_dir}}/fastq_trimmed/{sample}_trimmed.fastq.gz", sample=samples.ALL.Name.values + samples.BLEO.Name.values)
+    output: directory("{data_dir}/fastqc_trimmed")
+    params:
+        slurm__hours = 1,
+        slurm__cores = 12,
+        slurm__mem = 36
+    shell:
+        """
+        module purge all
+        module load fastqc
+        module load multiqc
+
+        mkdir {output}
+        fastqc `dirname {input[0]}`/*.fastq.gz \
+            -o {output} \
+            -t 12
+
+        multiqc {output}/* -o {output}
+        """
+
+rule trim:
+    input:
+        "{data_dir}/fastq/{sample}.fastq.gz"
+    output: "{data_dir}/fastq_trimmed/{sample}_trimmed.fastq.gz"
+    params:
+        slurm__hours = 1,
+        slurm__cores = 12,
+        slurm__mem = 12
+    shell:
+        """
+        module purge all
+        module load java
+
+        if [[ ! -d `dirname {output}` ]]; then
+            mkdir `dirname {output}`
+        fi
+        java -jar /projects/b1038/tools/Trimmomatic-0.36/trimmomatic-0.36.jar SE \
+            {input[0]} \
+            {output} \
+            -threads 12 \
+            TRAILING:30 MINLEN:20
+        """
+
+rule fastqc:
+    input: expand("{{data_dir}}/fastq/{sample}.fastq.gz", sample=samples.ALL.Name.values + samples.BLEO.Name.values)
+    output: directory("{data_dir}/fastqc")
+    params:
+        slurm__hours = 1,
+        slurm__cores = 12,
+        slurm__mem = 36
+    shell:
+        """
+        module purge all
+        module load fastqc
+        module load multiqc
+
+        mkdir {output}
+        fastqc `dirname {input[0]}`/*.fastq.gz \
+            -o {output} \
+            -t 12
+
+        multiqc {output}/* -o {output}
+        """
+
+
+rule bcl2fastq_2:
+    input: expand("../../raw/{run_id}/SampleSheet.csv", run_id=RUN_ID2)
+    output: expand("{{data_dir}}/fastq/{sample}.fastq.gz", sample=samples.BLEO.Name)
+    params:
+        project = PROJECT,
+        slurm__hours = 4,
+        slurm__cores = 12,
+        slurm__mem = 36
+    shell:
+        """
+        module purge all
+        module load bcl2fastq/2.19.1
+
+        bcl2fastq \
+            --runfolder-dir `dirname {input}` \
+            --loading-threads 11 \
+            --processing-threads 11 \
+            --writing-threads 11 \
+            --no-lane-splitting
+
+        if [[ ! -d `dirname {output[0]}` ]]; then
+            mkdir `dirname {output[0]}`
+        fi
+        for i in {output}; do
+            sample=`basename $i`
+            sample=${{sample%.fastq.gz}}
+            mv `dirname {input}`/Data/Intensities/BaseCalls/{params.project}/*/$sample*.fastq.gz \
+                $i
+        done
+        """
+
+
+rule bcl2fastq:
+    input: expand("../../raw/{run_id}/SampleSheet.csv", run_id=RUN_ID)
+    output: expand("{{data_dir}}/fastq/{sample}.fastq.gz", sample=samples.ALL.Name)
+    params:
+        project = PROJECT,
+        slurm__hours = 4,
+        slurm__cores = 12,
+        slurm__mem = 36
+    shell:
+        """
+        module purge all
+        module load bcl2fastq/2.19.1
+
+        bcl2fastq \
+            --runfolder-dir `dirname {input}` \
+            --loading-threads 11 \
+            --processing-threads 11 \
+            --writing-threads 11 \
+            --no-lane-splitting
+
+        if [[ ! -d `dirname {output[0]}` ]]; then
+            mkdir `dirname {output[0]}`
+        fi
+        for i in {output}; do
+            sample=`basename $i`
+            sample=${{sample%.fastq.gz}}
+            mv `dirname {input}`/Data/Intensities/BaseCalls/{params.project}/*/$sample*.fastq.gz \
+                $i
+        done
+        """
+
+
+rule sample_sheet2:
+    input: "samples2.txt"
+    output: "../../raw/{run_id}/SampleSheet.csv"
+    params:
+        slurm__skip = True
+    run:
+        utils.prepare_sample_sheet(input[0], output[0], PROJECT)
+
+
+rule sample_sheet:
+    input: "samples.txt"
+    output: "../../raw/{run_id}/SampleSheet.csv"
+    params:
+        slurm__skip = True
+    run:
+        utils.prepare_sample_sheet(input[0], output[0], PROJECT)
