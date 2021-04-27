@@ -1,0 +1,178 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Analysis of AT2 cells from young mice 14 days after bleomycin treatment
+
+```{r}
+simpleCache::setCacheDir(".r-cache")
+```
+
+```{r}
+source("https://raw.githubusercontent.com/NUPulmonary/utils/master/R/edger.R")
+```
+
+```{r}
+samples <- load_samples(
+  samples_file = "samples2.txt",
+  name_pattern = "S\\d\\d\\_(Y|O)\\_(N|B)\\_(.+)\\_(.+)\\_R\\d",
+  columns = c("Age", "Condition", "CellType", "Treatment")
+)
+samples$sample_id <- sapply(strsplit(samples$sample_name, "_"), `[`, 1)
+samples
+```
+
+```{r}
+counts <- load_counts('../../data/at2/counts2/htseq.all.counts.txt', samples)
+```
+
+```{r}
+plot_cor(counts)
+```
+
+```{r}
+plot_lib_sizes(counts)
+```
+
+```{r}
+gene.anno <- simpleCache::simpleCache('gene.anno', {
+  get_anno(counts)
+})
+```
+
+```{r}
+all <- create_experiment(samples, counts, gene.anno, remove_urna = FALSE)
+all <- add_dge(all)
+```
+
+```{r}
+# pdf("all-mds.pdf", width = 12, height = 12)
+plot_mds(all)
+# dev.off()
+```
+
+```{r}
+exp <- create_experiment(
+  samples,
+  counts,
+  anno = gene.anno,
+  exclude = c("S16")
+)
+exp <- add_dge(exp)
+exp <- add_pca(exp)
+```
+
+```{r}
+plot_mds(exp, label = TRUE)
+```
+
+```{r}
+run_de(
+  exp,
+  makeContrasts(Y_B_AT2_Saline - Y_N_AT2_Saline, levels = exp$design),
+  "b-vs-n_young_saline",
+  "Bleo vs Naive (young saline)"
+)
+```
+
+
+```{r}
+exp <- add_de(
+  exp,
+  makeContrasts(Y_B_AT2_Saline - Y_N_AT2_Saline, levels = exp$design),
+  "b-vs-n_young_saline",
+  "Bleo vs Naive (young saline)"
+)
+```
+
+```{r}
+b.vs.n_young_saline_enr <- run_enrichment(exp$dea$`b-vs-n_young_saline`, pathways = "mouse-isr.gmt")
+```
+
+```{r}
+pdf("b.vs.n_young_saline-isr2.pdf", width = 6, height = 4)
+plot(b.vs.n_young_saline_enr$plot)
+dev.off()
+```
+
+
+## Pretty volcano plot for Bleo vs Naive young saline
+```{r}
+pdf("b-vs-n_young_saline/b-vs-n_young_saline-volcano-manual.pdf", width = 6, height = 6, useDingbats = FALSE)
+up.name <- ""
+name <- "b-vs-n_young_saline"
+
+highlight.genes <- c(
+  "Eif3c", "Hspa9", "Eif2s2", "Cdkn1a", "Hspa2", "Hist1h1d", "Cxcl17",
+  "Hopx", "Krt7"
+)
+
+genes <- exp$dea[[name]]$genes
+up <- exp$dea[[name]]$up
+down <- exp$dea[[name]]$down
+
+upregs <- genes$FDR < .05 & genes$logFC > 0
+downregs <- genes$FDR < .05 & genes$logFC < 0
+up.legend <- paste0("Up in ", up.name, " (", sum(upregs), ")")
+down.legend <- paste0("Down in ", up.name, " (", sum(downregs), ")")
+
+genes$significance <- "Not significant"
+genes$significance[upregs] <- up.legend
+genes$significance[downregs] <- down.legend
+genes$significance <- factor(
+    genes$significance,
+    levels = c(
+        "Not significant",
+        down.legend,
+        up.legend
+    )
+)
+
+if (is.null(highlight.genes)) {
+    top.genes <- data.frame(rbind(
+        genes[rownames(up)[1:10], ],
+        genes[rownames(down)[1:10], ]
+    ))
+} else {
+    top.genes <- genes[genes$external_gene_name %in% highlight.genes, ]
+}
+
+plot <- ggplot(genes, aes(x = logFC, y = -log10(FDR))) +
+    geom_point(
+        aes(color = significance),
+        alpha = 1,
+        shape = 20,
+        size = 3
+    ) +
+    theme_minimal() +
+    scale_color_manual(
+        values = c("#bbbbbb", "#e37900", "#e37900"),
+        labels = c(
+            paste0("Not significant (", sum(genes$significance == "Not significant"), ")"),
+            down.legend,
+            up.legend
+        )
+    ) +
+    theme(
+        legend.position = "none",
+        legend.text = element_text(size = 10),
+        legend.title = element_blank(),
+        plot.title = element_text(size = 16),
+        panel.grid = element_blank(),
+        axis.line = element_line(colour = "gray")
+    ) +
+    geom_text_repel(
+        data = top.genes,
+        aes(label = external_gene_name),
+        size = 5,
+        box.padding = unit(.6, "lines"),
+        label.padding = unit(10, "lines"),
+        #point.padding = unit(0, "lines"),
+        min.segment.length = 0,
+        #ylim = c(1.5, NA),
+        segment.alpha = 0.5
+    )
+plot
+dev.off()
+```
