@@ -5,6 +5,8 @@ output: html_notebook
 
 # Analysis of AT2 cells from young mice 14 days after bleomycin treatment
 
+Samples 9 to 17 from GSE145771
+
 ```{r}
 simpleCache::setCacheDir(".r-cache")
 ```

@@ -5,6 +5,8 @@ output: html_notebook
 
 # Analysis of AT2 cells from young mice 1 day after ISRIB treatment
 
+Samples 1 to 8 from GSE145771
+
 ```{r}
 library(pheatmap)
 library(gplots)
