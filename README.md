@@ -11,5 +11,5 @@ the recruitment of profibrotic monocyte-derived alveolar macrophages and amelior
 findings suggest a dysfunctional role for the ISR in regeneration of the alveolar epithelium after injury 
 with implications for therapy.
 
-https://www.biorxiv.org/content/10.1101/2020.02.26.965566v1
+https://www.pnas.org/content/118/20/e2101100118
 
